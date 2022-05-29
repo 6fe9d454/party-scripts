@@ -86,6 +86,7 @@ def main(args):
                             )
                     else:
                         for attachment in post["attachments"]:
+                            name, path = attachment["name"], attachment["path"]
                             attachments.append(f"https://kemono.party{path}")
 
                 # Check links if applicable
