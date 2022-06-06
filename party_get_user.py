@@ -79,19 +79,6 @@ def main(args):
                     else:
                         new_link = link.rsplit(".", 1)[0] + ext
                         filtered_links.append(new_link)
-
-        # for link in links:
-        #     link_ext = "." + link.split("/")[-1].rsplit(".", 1)[-1].lower()
-        #     for ext in exts:
-        #         if link_ext.startswith(ext):
-        #             if link_ext == ext:
-        #                 # We can save it as is
-        #                 filtered_links.append(link)
-        #             else:
-        #                 # We need to replace it with a good extension
-        #                 new_link = link.rsplit(".", 1)[0] + ext
-        #                 filtered_links.append(new_link)
-        #             break
         return filtered_links
 
     def ensure_one_link_per_link(links):
