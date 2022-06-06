@@ -7,6 +7,7 @@ Keep note, that the links pulled from the posts, especially with link discovery 
 
 import argparse
 import re
+import mimetypes
 from urllib.parse import urlparse
 
 import requests
@@ -18,6 +19,9 @@ PARTY_REGEX = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 LINK_REGEX = re.compile(r"(?P<url>https?://[^\s]+)")
+HTTP_REGEX = re.compile(r"https?://")
+EXT_REGEX = re.compile(r"https?://.*\/.*\.(.*)$")
+STANDARD_EXTS = list(mimetypes.types_map.keys()) + [".blend"]
 
 
 def main(args):
@@ -25,6 +29,12 @@ def main(args):
     links = args.LINKS
     aria_format = args.aria2_format
     link_discovery = args.link_discovery
+    ensure_one_line = args.one_line
+    trim_weird_exts = args.trim_weird_exts
+    additional_exts = args.additional_exts
+    all_extensions = STANDARD_EXTS.copy()
+    if additional_exts:
+        all_extensions.extend(additional_exts)
     start_page = args.start_page * 25
     end_page = args.end_page
     if end_page is not None:
@@ -38,7 +48,7 @@ def main(args):
         ).xpath("//title/text()")[0]
         return re.findall(r"^Posts of (.*) from .*$", title, re.IGNORECASE | re.DOTALL)[
             0
-        ]
+        ].lower()
 
     def get_links(contents):
         if contents.strip():
@@ -49,6 +59,59 @@ def main(args):
             links.update(LINK_REGEX.findall(clean_contents.strip()))
             return list(links)
         return []
+
+    def clean_extensions(links, exts):
+        filtered_links = []
+        for link in links:
+            link_ext = EXT_REGEX.search(link)
+
+            # No end of link extension, must be normal? or something unconventional, like gyfcat
+            if not link_ext:
+                filtered_links.append(link)
+                continue
+
+            # We have a potential extension
+            link_ext = "." + link_ext.groups()[0].lower()
+            for ext in exts:
+                if link_ext.startswith(ext):
+                    if link_ext == ext:
+                        filtered_links.append(link)
+                    else:
+                        new_link = link.rsplit(".", 1)[0] + ext
+                        filtered_links.append(new_link)
+
+        # for link in links:
+        #     link_ext = "." + link.split("/")[-1].rsplit(".", 1)[-1].lower()
+        #     for ext in exts:
+        #         if link_ext.startswith(ext):
+        #             if link_ext == ext:
+        #                 # We can save it as is
+        #                 filtered_links.append(link)
+        #             else:
+        #                 # We need to replace it with a good extension
+        #                 new_link = link.rsplit(".", 1)[0] + ext
+        #                 filtered_links.append(new_link)
+        #             break
+        return filtered_links
+
+    def ensure_one_link_per_link(links):
+        filtered_links = []
+        for link in links:
+            groups = list(HTTP_REGEX.finditer(link))
+
+            # Link is fine
+            if len(groups) == 1:
+                filtered_links.append(link)
+                continue
+
+            # Link is not fine; we found multiple protocols in the same link
+            # break it apart via the start positions of each match
+            starts = [g.start() for g in groups]
+            starts.append(-1)
+            for s, e in zip(starts, starts[1:]):
+                filtered_links.append(link[s:e])
+
+        return filtered_links
 
     for link in links:
 
@@ -110,7 +173,7 @@ def main(args):
                             name, path = attachment["name"], attachment["path"]
                             attachments.append(f"https://{party}.party{path}")
 
-                # Check links if applicable
+                # Check links to see if the filename itself is a link to the hi resolution link
                 if link_discovery:
 
                     for attachment in post["attachments"]:
@@ -142,9 +205,32 @@ def main(args):
 
                             d_count += 1
 
-            print(f"{lprefix} Added an additional {d_count} link(s) from filenames ...")
+                # Breaks links into multiple generally
+                if ensure_one_line:
+                    pre = len(post_links)
+                    post_links = ensure_one_link_per_link(post_links)
+                    post = len(post_links)
+                    if post > pre:
+                        print(
+                            f"{lprefix} Ensured single line links, net gain of {post-pre} links"
+                        )
+
+                # Should ideally come last, as it does not ADD anything, only cleans
+                if trim_weird_exts:
+                    post_links = clean_extensions(post_links, all_extensions)
+
+            if d_count > 0:
+                print(
+                    f"{lprefix} Added an additional {d_count} link(s) from filenames ..."
+                )
+
+            if c_count > 0:
+                print(
+                    f"{lprefix} Added an additional {c_count} link(s) from post contents ..."
+                )
+
             print(
-                f"{lprefix} Added an additional {c_count} link(s) from post contents ..."
+                f"{lprefix} +{len(attachments)} attachments, +{len(post_links)} links"
             )
 
             # Append to file(s)
@@ -163,6 +249,7 @@ def main(args):
 
         print(f"{prefix} Found {total_links} links")
         print(f"{prefix} Found {total_attachments} attachments")
+        print(f"{prefix} Complete!")
 
 
 if __name__ == "__main__":
@@ -181,6 +268,27 @@ if __name__ == "__main__":
         default=False,
         action="store_true",
         help="add links born from attachment filename(s) and post contents",
+    )
+    parser.add_argument(
+        "-o",
+        "--one-line",
+        default=False,
+        action="store_true",
+        help='primtively ensure that links gathered only have one "link" each by protocol',
+    )
+    parser.add_argument(
+        "-t",
+        "--trim-weird-exts",
+        default=False,
+        action="store_true",
+        help="trim non-standard extensions (e.g., remove anything after what should be a normal extension in each link), may help cut down on post processing for links, may be worse if your artist uses image/video providers that do not include file extensions in the URL (e.g. gyfcat, redgif, mega, etc)",
+    )
+    parser.add_argument(
+        "-x",
+        "--additional-exts",
+        default=None,
+        nargs="+",
+        help="additional, non-standard file extensions to include when checking for weirdness in links",
     )
     parser.add_argument("-s", "--start-page", default=0, type=int, help="start page")
     parser.add_argument("-e", "--end-page", default=None, type=int, help="end page")
